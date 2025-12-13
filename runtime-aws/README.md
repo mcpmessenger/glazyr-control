@@ -116,6 +116,10 @@ Set **one** of the following env vars on the **ingest** Lambda:
 - `GOOGLE_VISION_SERVICE_ACCOUNT_JSON` (recommended): full service account JSON as a string
 - `GOOGLE_APPLICATION_CREDENTIALS`: path to a credentials JSON file (only if you provide one in the Lambda filesystem)
 
+### Billing requirement
+
+Google Vision OCR requires the **Cloud Vision API enabled** and **billing enabled** on the GCP project. If billing is not enabled, `/runtime/vision/ocr` will fail with `PERMISSION_DENIED` mentioning billing.
+
 ## Code layout
 
 - **`lambda/ingest/`**: Function URL handler (HTTP endpoints)
@@ -127,7 +131,13 @@ Set **one** of the following env vars on the **ingest** Lambda:
 Run from repo root:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/provision-runtime-aws.ps1 -Region us-east-1 -Prefix glazyr-runtime -RuntimeApiKey ""
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/provision-runtime-aws.ps1 -Region us-east-1 -Prefix glazyr-runtime
+```
+
+To set Vision credentials during provisioning:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/provision-runtime-aws.ps1 -Region us-east-1 -Prefix glazyr-runtime -GoogleVisionServiceAccountJsonFile "C:\path\to\vision-sa.json"
 ```
 
 ## Cleanup (manual)

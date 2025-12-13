@@ -21,7 +21,7 @@ Provisions/updates the **Glazyr Runtime (AWS)** resources used by the extension:
 From repo root:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/provision-runtime-aws.ps1 -Region us-east-1 -Prefix glazyr-runtime -RuntimeApiKey ""
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/provision-runtime-aws.ps1 -Region us-east-1 -Prefix glazyr-runtime
 ```
 
 Parameters:
@@ -29,11 +29,14 @@ Parameters:
 - `-Region`: AWS region (default `us-east-1`)
 - `-Prefix`: resource name prefix (default `glazyr-runtime`)
 - `-RuntimeApiKey`: optional API key enforced by the ingest Lambda (empty = no auth)
+- `-GoogleVisionServiceAccountJsonFile`: optional path to a GCP service account JSON key file. If provided, the script sets `GOOGLE_VISION_SERVICE_ACCOUNT_JSON` on the ingest Lambda.
+- `-GoogleVisionServiceAccountJson`: optional raw JSON string (alternative to `*JsonFile`).
 
 ### Output
 
-The script prints the ingest **Function URL base** and the three runtime endpoints:
+The script prints the ingest **Function URL base** and the runtime endpoints:
 
 - `POST /runtime/task/start`
+- `POST /runtime/vision/ocr`
 - `GET  /runtime/next-action?deviceId=<device>`
 - `POST /runtime/action-result`

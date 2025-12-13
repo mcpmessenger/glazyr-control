@@ -13,6 +13,18 @@ Glazyr is a **safety-first web automation stack** split into three responsibilit
 - **`runtime-aws/`**: AWS runtime (Lambda ingest + SQS worker + DynamoDB) used by the extension.
 - **`scripts/`**: provisioning helpers (AWS CLI + PowerShell).
 
+## POC status (working)
+
+- **Vision (OCR)**: ✅ **Google Vision OCR is wired end-to-end** via `runtime-aws`:
+  - Extension captures a framed screenshot region and calls `POST /runtime/vision/ocr`.
+  - OCR text is printed into the widget chat (not a separate panel).
+- **Widget UX**:
+  - ✅ Widget default position/size is clamped to the viewport (won’t open cut off).
+  - ✅ A draggable in-page **Glazyr logo launcher** toggles the widget.
+  - ✅ Screenshot preview is **not** rendered inside the widget (saves space for chat/analysis).
+
+> Note: Google Vision requires **billing enabled** on the GCP project. See `runtime-aws/README.md`.
+
 ## Quickstart (local)
 
 ### Web control plane
@@ -37,11 +49,16 @@ Open `http://localhost:3000`.
 Provision / update the runtime backend (creates DynamoDB tables, SQS queue, IAM role/policy, two Lambdas, Function URL, and SQS trigger):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/provision-runtime-aws.ps1 -Region us-east-1 -Prefix glazyr-runtime -RuntimeApiKey ""
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/provision-runtime-aws.ps1 -Region us-east-1 -Prefix glazyr-runtime
 ```
 
 - Requires: `aws` CLI logged in and `npm`.
-- Output prints the **Function URL base** and the three endpoints.
+- Output prints the **Function URL base** and the endpoints (includes `/runtime/vision/ocr`).
+- To enable OCR, pass a service account key file:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/provision-runtime-aws.ps1 -Region us-east-1 -Prefix glazyr-runtime -GoogleVisionServiceAccountJsonFile "C:\path\to\vision-sa.json"
+```
 
 ## Extension ↔ runtime configuration
 
@@ -52,6 +69,11 @@ The extension can be pointed at a different runtime by setting `chrome.storage.l
 - `glazyrDeviceId`: generated automatically if missing
 
 By default, the current build uses the provisioned Function URL baked into `glazyr-extension/dist/background.js`.
+
+## Security notes (important)
+
+- **Never commit** Google service account keys. If a key is pasted/shared, **revoke/rotate it immediately**.
+- If you cannot store service account JSON in Lambda env vars (size limits), use AWS SSM/Secrets Manager and load it at runtime (next step).
 
 ## Safety model (high level)
 
