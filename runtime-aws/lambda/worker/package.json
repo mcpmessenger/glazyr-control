@@ -1,0 +1,11 @@
+{
+  "name": "glazyr-runtime-worker",
+  "private": true,
+  "version": "0.0.1",
+  "type": "commonjs",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.873.0",
+    "@aws-sdk/lib-dynamodb": "^3.873.0"
+  }
+}
+

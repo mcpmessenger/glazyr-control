@@ -1,0 +1,6 @@
+[submodule "glazyr-main"]
+	path = glazyr-main
+	url = https://github.com/mcpmessenger/glazyr.git
+[submodule "glazyr-extension"]
+	path = glazyr-extension
+	url = https://github.com/mcpmessenger/glazyr-chrome-extension.git
