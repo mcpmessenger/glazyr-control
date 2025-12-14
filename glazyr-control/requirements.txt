@@ -1,0 +1,10 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+tenacity==9.0.0
+redis==5.2.1
+mangum==0.17.0
+
+# LLM / agent execution (kept minimal and replaceable)
+langchain==0.3.14
+langchain-openai==0.2.14

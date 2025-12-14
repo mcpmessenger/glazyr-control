@@ -1,0 +1,13 @@
+{
+  "name": "glazyr-runtime-ingest",
+  "private": true,
+  "version": "0.0.1",
+  "type": "commonjs",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.873.0",
+    "@aws-sdk/client-sqs": "^3.873.0",
+    "@aws-sdk/lib-dynamodb": "^3.873.0",
+    "@google-cloud/vision": "^5.3.3"
+  }
+}
+
