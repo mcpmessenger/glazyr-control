@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: glazyr-control (FastAPI) as an AWS Lambda microservice (Function URL).
+Parameters:
+  ServiceName:
+    Type: String
+    Default: glazyr-control
+  Stage:
+    Type: String
+    Default: dev
+  ApiKey:
+    Type: String
+    Default: ''
+    Description: 'Optional API key required for /mcp/* and /api/* routes (header:
+      Authorization Bearer or x-glazyr-api-key).'
+  PayloadMaxBytes:
+    Type: Number
+    Default: 5242880
+    Description: Payload size limit in bytes (default 5MB).
+  AllowedDomains:
+    Type: String
+    Default: ''
+    Description: Optional comma-separated allowlist for URL hosts inside /mcp/invoke
+      payloads (supports *.example.com).
+  OpenAIKeySecretArn:
+    Type: String
+    Default: ''
+    Description: Optional Secrets Manager ARN containing the OpenAI API key string.
+  OpenAIModel:
+    Type: String
+    Default: gpt-4o-mini
+Conditions:
+  HasOpenAISecret:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: OpenAIKeySecretArn
+      - ''
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: python3.12
+    Architectures:
+    - x86_64
+Resources:
+  GlazyrControlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${ServiceName}-${Stage}
+      CodeUri: GlazyrControlFunction
+      Handler: src.lambda_handler.handler
+      Environment:
+        Variables:
+          API_KEY:
+            Ref: ApiKey
+          PAYLOAD_MAX_BYTES:
+            Ref: PayloadMaxBytes
+          ALLOWED_DOMAINS:
+            Ref: AllowedDomains
+          OPENAI_API_KEY_SECRET_ARN:
+            Ref: OpenAIKeySecretArn
+          OPENAI_MODEL:
+            Ref: OpenAIModel
+          PROMETHEUS_ENABLED: 'true'
+          SENTRY_ENABLED: 'false'
+      Policies:
+      - AWSLambdaBasicExecutionRole
+      - Fn::If:
+        - HasOpenAISecret
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn:
+              Ref: OpenAIKeySecretArn
+        - Ref: AWS::NoValue
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins:
+          - '*'
+          AllowHeaders:
+          - '*'
+          AllowMethods:
+          - '*'
+    Metadata:
+      SamResourceId: GlazyrControlFunction
+Outputs:
+  FunctionName:
+    Value:
+      Ref: GlazyrControlFunction
+  FunctionUrl:
+    Value:
+      Fn::GetAtt:
+      - GlazyrControlFunctionUrl
+      - FunctionUrl

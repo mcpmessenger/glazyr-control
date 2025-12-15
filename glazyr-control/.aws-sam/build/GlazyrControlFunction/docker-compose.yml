@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  glazyr-control:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PROMETHEUS_ENABLED=true
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - SENTRY_ENABLED=${SENTRY_ENABLED:-false}
+      - API_KEY=${API_KEY:-}
+      - REDIS_URL=${REDIS_URL:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Optional: Redis for task persistence
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    profiles:
+      - with-redis
+
+volumes:
+  redis-data:

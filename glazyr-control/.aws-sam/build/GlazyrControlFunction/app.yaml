@@ -1,0 +1,16 @@
+# GCP App Engine configuration (alternative to Cloud Run)
+# Note: Cloud Run is recommended, but App Engine is also an option
+
+runtime: python312
+entrypoint: uvicorn src.main:app --host 0.0.0.0 --port 8080
+
+instance_class: F2
+automatic_scaling:
+  min_instances: 0
+  max_instances: 10
+  target_cpu_utilization: 0.6
+
+env_variables:
+  PROMETHEUS_ENABLED: "true"
+  SENTRY_ENABLED: "false"
+  # Note: Set OPENAI_API_KEY via Secret Manager in production
