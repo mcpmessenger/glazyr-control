@@ -1,10 +1,16 @@
 fastapi==0.115.6
-uvicorn[standard]==0.34.0
+uvicorn==0.34.0
 pydantic==2.10.4
 tenacity==9.0.0
 redis==5.2.1
 mangum==0.17.0
+requests==2.31.0
 
 # LLM / agent execution (kept minimal and replaceable)
 langchain==0.3.14
 langchain-openai==0.2.14
+# langchain-core is installed as a dependency of langchain (0.3.14 requires >=0.3.29)
+
+# Observability
+prometheus-client==0.20.0
+sentry-sdk[fastapi]==2.15.0

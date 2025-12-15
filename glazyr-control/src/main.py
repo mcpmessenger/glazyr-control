@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -13,18 +14,70 @@ from .policy import extract_api_key, read_body_with_replay, validate_allowlist
 from .secrets import ensure_openai_key_from_secrets_manager
 from .state import TaskStore
 
+# Initialize Sentry if enabled
+settings = load_settings()
+app = FastAPI(title="glazyr-control", version="0.1")
+
+if settings.sentry_enabled and settings.sentry_dsn:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.logging import LoggingIntegration
+
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            integrations=[
+                FastApiIntegration(),
+                LoggingIntegration(level=None, event_level=None),
+            ],
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+            environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+            release=os.getenv("SENTRY_RELEASE"),
+        )
+    except ImportError:
+        # Sentry not installed, skip
+        pass
+
+# Initialize Prometheus metrics if enabled
+REQUESTS_TOTAL = None
+REQUEST_LATENCY = None
+if settings.prometheus_enabled:
+    try:
+        from fastapi.responses import Response
+        from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+
+        # Basic HTTP metrics (low-cardinality labels: method + path template-like usage).
+        REQUESTS_TOTAL = Counter(
+            "glazyr_http_requests_total",
+            "Total HTTP requests handled by glazyr-control.",
+            ["method", "path", "status"],
+        )
+        REQUEST_LATENCY = Histogram(
+            "glazyr_http_request_duration_seconds",
+            "HTTP request latency in seconds for glazyr-control.",
+            ["method", "path"],
+            buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10),
+        )
+
+        @app.get("/metrics")
+        async def metrics():
+            # Avoid redirect loops with Function URL + mounted ASGI apps.
+            return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    except ImportError:
+        pass
+else:
+    pass
 
 ensure_openai_key_from_secrets_manager()
-settings = load_settings()
 store = TaskStore(settings.redis_url)
-
-app = FastAPI(title="glazyr-control", version="0.1")
 
 
 @app.middleware("http")
 async def policy_middleware(request: Request, call_next):
     # Only enforce strict checks on invoke route(s) and monitoring routes if desired.
     path = request.url.path or ""
+    method = request.method or "GET"
+    start = time.perf_counter()
 
     # Read and replay body once for downstream handlers.
     raw_body, parsed_json = await read_body_with_replay(request)
@@ -46,9 +99,29 @@ async def policy_middleware(request: Request, call_next):
         try:
             validate_allowlist(parsed_json, settings.allowed_domains)
         except HTTPException as e:
+            # Record metrics before returning early.
+            if REQUESTS_TOTAL is not None:
+                REQUESTS_TOTAL.labels(method=method, path=path, status=str(e.status_code)).inc()
+            if REQUEST_LATENCY is not None:
+                REQUEST_LATENCY.labels(method=method, path=path).observe(max(0.0, time.perf_counter() - start))
             return JSONResponse(status_code=e.status_code, content={"error": str(e.detail)})
 
-    return await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        # Ensure we still increment metrics on unhandled errors.
+        if REQUESTS_TOTAL is not None:
+            REQUESTS_TOTAL.labels(method=method, path=path, status="500").inc()
+        if REQUEST_LATENCY is not None:
+            REQUEST_LATENCY.labels(method=method, path=path).observe(max(0.0, time.perf_counter() - start))
+        raise
+
+    if REQUESTS_TOTAL is not None:
+        REQUESTS_TOTAL.labels(method=method, path=path, status=str(getattr(response, "status_code", 200))).inc()
+    if REQUEST_LATENCY is not None:
+        REQUEST_LATENCY.labels(method=method, path=path).observe(max(0.0, time.perf_counter() - start))
+
+    return response
 
 
 @app.get("/healthz")

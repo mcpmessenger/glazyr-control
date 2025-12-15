@@ -12,7 +12,7 @@ Parameters:
   ApiKey:
     Type: String
     Default: ""
-    Description: Optional API key required for /mcp/* and /api/* routes (header: Authorization Bearer or x-glazyr-api-key).
+    Description: "Optional API key required for /mcp/* and /api/* routes (header: Authorization Bearer or x-glazyr-api-key)."
   PayloadMaxBytes:
     Type: Number
     Default: 5242880
@@ -20,7 +20,7 @@ Parameters:
   AllowedDomains:
     Type: String
     Default: ""
-    Description: Optional comma-separated allowlist for URL hosts inside /mcp/invoke payloads (supports *.example.com).
+    Description: "Optional comma-separated allowlist for URL hosts inside /mcp/invoke payloads (supports *.example.com)."
   OpenAIKeySecretArn:
     Type: String
     Default: ""
@@ -54,6 +54,8 @@ Resources:
           ALLOWED_DOMAINS: !Ref AllowedDomains
           OPENAI_API_KEY_SECRET_ARN: !Ref OpenAIKeySecretArn
           OPENAI_MODEL: !Ref OpenAIModel
+          PROMETHEUS_ENABLED: "true"
+          SENTRY_ENABLED: "false"
       Policies:
         - AWSLambdaBasicExecutionRole
         - !If
@@ -69,9 +71,7 @@ Resources:
           AllowHeaders:
             - "*"
           AllowMethods:
-            - GET
-            - POST
-            - OPTIONS
+            - "*"
 
 Outputs:
   FunctionName:
