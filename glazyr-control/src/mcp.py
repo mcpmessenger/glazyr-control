@@ -3,8 +3,11 @@ from __future__ import annotations
 import os
 import time
 import uuid
+import re
+import json
 from typing import Any, Dict, Optional, Tuple
 
+import requests
 from fastapi import HTTPException
 from tenacity import RetryError
 
@@ -108,7 +111,7 @@ def _get_task_id(inputs: Dict[str, Any]) -> str:
     return tid if tid else str(uuid.uuid4())
 
 
-def invoke(payload: Any, *, store: TaskStore, model: str) -> Dict[str, Any]:
+def invoke(payload: Any, *, store: TaskStore, model: str, settings: Any = None) -> Dict[str, Any]:
     tool, inputs = _normalize_invoke_request(payload)
     if not tool:
         raise HTTPException(status_code=400, detail="Missing tool name")
@@ -134,9 +137,23 @@ def invoke(payload: Any, *, store: TaskStore, model: str) -> Dict[str, Any]:
         if not input_query:
             raise HTTPException(status_code=422, detail="Missing inputs.input")
 
+        # Check for routing prefixes: /langchain or /valuation
+        routed_query, target_mcp = _detect_routing_prefix(input_query, settings)
+        
+        # If routing detected, proxy to the appropriate MCP server
+        if target_mcp:
+            # Use workaround for Valuation MCP (broken agent_executor)
+            # Check if this is a valuation query that can use direct tool calls
+            valuation_url = getattr(settings, 'valuation_mcp_url', None)
+            if target_mcp == valuation_url and valuation_url and _is_valuation_query(routed_query):
+                return _valuation_direct_tool_call_workaround(routed_query, target_mcp, task_id, request_id)
+            else:
+                return _proxy_to_mcp_server(routed_query, target_mcp, task_id, request_id)
+
+        # Continue with local agent execution (no routing prefix detected)
         now = int(time.time() * 1000)
-    # Write a pending summary early (so polling sees activity).
-    store.upsert(
+        # Write a pending summary early (so polling sees activity).
+        store.upsert(
         TaskSummary(
             task_id=task_id,
             status="running",
@@ -232,6 +249,310 @@ def invoke(payload: Any, *, store: TaskStore, model: str) -> Dict[str, Any]:
             )
         )
         return {"task_id": task_id, "error": "Internal error", "details": safe_text_preview(msg, 800), "request_id": request_id}
+
+
+def _detect_routing_prefix(query: str, settings: Any) -> Tuple[str, Optional[str]]:
+    """
+    Detect routing prefixes in the query and return the cleaned query and target MCP server.
+    
+    Returns:
+        Tuple of (cleaned_query, target_mcp_url or None)
+    """
+    if not settings:
+        return query, None
+    
+    query_lower = query.lower().strip()
+    
+    # Check for /langchain prefix
+    if query_lower.startswith("/langchain") or query_lower.startswith("/langchain "):
+        cleaned = query[10:].strip() if len(query) > 10 else ""
+        return cleaned, settings.langchain_mcp_url if hasattr(settings, 'langchain_mcp_url') else None
+    
+    # Check for /valuation prefix
+    if query_lower.startswith("/valuation") or query_lower.startswith("/valuation "):
+        cleaned = query[10:].strip() if len(query) > 10 else ""
+        return cleaned, settings.valuation_mcp_url if hasattr(settings, 'valuation_mcp_url') else None
+    
+    return query, None
+
+
+def _is_valuation_query(query: str) -> bool:
+    """
+    Check if a query is asking for valuation/unicorn score and can use direct tool calls.
+    
+    Returns True if the query mentions unicorn score, valuation, or asks to analyze a repo.
+    """
+    query_lower = query.lower()
+    valuation_keywords = [
+        "unicorn score",
+        "unicorn_score",
+        "valuation",
+        "value",
+        "analyze",
+        "calculate",
+    ]
+    return any(keyword in query_lower for keyword in valuation_keywords)
+
+
+def _extract_github_repo_from_query(query: str) -> Optional[Tuple[str, str]]:
+    """
+    Extract GitHub repository owner and repo name from a query string.
+    
+    Supports formats:
+    - https://github.com/owner/repo
+    - github.com/owner/repo
+    - owner/repo
+    
+    Returns:
+        Tuple of (owner, repo) or None if not found
+    """
+    # Pattern for full GitHub URL
+    url_pattern = r'(?:https?://)?(?:www\.)?github\.com/([\w\-\.]+)/([\w\-\.]+)'
+    match = re.search(url_pattern, query, re.IGNORECASE)
+    if match:
+        return (match.group(1), match.group(2))
+    
+    # Pattern for owner/repo format (more strict)
+    owner_repo_pattern = r'\b([\w\-\.]+)/([\w\-\.]+)\b'
+    matches = list(re.finditer(owner_repo_pattern, query))
+    
+    # Look for patterns that look like GitHub repos (not just any slash)
+    for match in matches:
+        owner, repo = match.group(1), match.group(2)
+        # Basic validation: both parts should be reasonable length and not contain certain chars
+        if len(owner) > 0 and len(repo) > 0 and '/' not in owner and '/' not in repo:
+            # Avoid matching things like "https://" or dates
+            if not owner.startswith('http') and not repo.endswith('.com'):
+                return (owner, repo)
+    
+    return None
+
+
+def _valuation_direct_tool_call_workaround(query: str, target_mcp_url: str, task_id: str, request_id: str) -> Dict[str, Any]:
+    """
+    Workaround for broken agent_executor: Make direct tool calls for valuation queries.
+    
+    This implements the two-step process:
+    1. Call analyze_github_repository to get repo_data
+    2. Call unicorn_hunter with repo_data to get unicorn score
+    
+    Args:
+        query: The user query (may contain GitHub URL)
+        target_mcp_url: The Valuation MCP Server URL
+        task_id: Task ID for tracking
+        request_id: Request ID for tracing
+        
+    Returns:
+        MCP-formatted response with valuation result
+    """
+    if not target_mcp_url:
+        return {
+            "task_id": task_id,
+            "error": "Target MCP server URL not configured",
+            "request_id": request_id,
+        }
+    
+    base_url = target_mcp_url.rstrip("/")
+    
+    try:
+        # Extract repository from query
+        repo_info = _extract_github_repo_from_query(query)
+        if not repo_info:
+            return {
+                "task_id": task_id,
+                "request_id": request_id,
+                "error": "Could not extract GitHub repository information from query. Please provide repository in format: owner/repo or https://github.com/owner/repo",
+            }
+        
+        owner, repo = repo_info
+        
+        # Step 1: Analyze repository
+        analyze_response = requests.post(
+            f"{base_url}/mcp/invoke",
+            json={
+                "tool": "analyze_github_repository",
+                "arguments": {
+                    "owner": owner,
+                    "repo": repo
+                }
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=120,
+        )
+        
+        analyze_response.raise_for_status()
+        analyze_result = analyze_response.json()
+        
+        # Extract repo_data from response
+        # The response format is: {"content": [{"type": "text", "text": "<JSON_STRING>"}]}
+        if not analyze_result.get("content") or len(analyze_result["content"]) == 0:
+            return {
+                "task_id": task_id,
+                "request_id": request_id,
+                "error": "Failed to get repository analysis: empty response",
+            }
+        
+        repo_data_text = analyze_result["content"][0].get("text", "")
+        if not repo_data_text:
+            return {
+                "task_id": task_id,
+                "request_id": request_id,
+                "error": "Failed to get repository analysis: no data in response",
+            }
+        
+        # Parse the JSON string from the text field
+        try:
+            repo_data = json.loads(repo_data_text)
+        except json.JSONDecodeError as e:
+            # If it's already a dict, use it directly
+            if isinstance(repo_data_text, dict):
+                repo_data = repo_data_text
+            else:
+                return {
+                    "task_id": task_id,
+                    "request_id": request_id,
+                    "error": f"Failed to parse repository analysis data: {str(e)}",
+                }
+        
+        # Step 2: Calculate unicorn score using unicorn_hunter
+        unicorn_response = requests.post(
+            f"{base_url}/mcp/invoke",
+            json={
+                "tool": "unicorn_hunter",
+                "arguments": {
+                    "repo_data": repo_data
+                }
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=120,
+        )
+        
+        unicorn_response.raise_for_status()
+        unicorn_result = unicorn_response.json()
+        
+        # Extract the final result
+        if not unicorn_result.get("content") or len(unicorn_result["content"]) == 0:
+            return {
+                "task_id": task_id,
+                "request_id": request_id,
+                "error": "Failed to get unicorn score: empty response",
+            }
+        
+        valuation_text = unicorn_result["content"][0].get("text", "")
+        if not valuation_text:
+            return {
+                "task_id": task_id,
+                "request_id": request_id,
+                "error": "Failed to get unicorn score: no data in response",
+            }
+        
+        # Return in MCP-compatible format
+        return {
+            "task_id": task_id,
+            "request_id": request_id,
+            "output": valuation_text,
+            "result": valuation_text,
+        }
+        
+    except requests.exceptions.Timeout:
+        return {
+            "task_id": task_id,
+            "error": "Request to Valuation MCP server timed out",
+            "request_id": request_id,
+        }
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = e.response.json()
+            error_msg = error_data.get("error", str(e))
+        except:
+            error_msg = str(e)
+        return {
+            "task_id": task_id,
+            "error": f"Valuation MCP server error: {error_msg}",
+            "request_id": request_id,
+        }
+    except Exception as e:
+        return {
+            "task_id": task_id,
+            "error": f"Failed to get valuation: {str(e)}",
+            "request_id": request_id,
+        }
+
+
+def _proxy_to_mcp_server(query: str, target_mcp_url: str, task_id: str, request_id: str) -> Dict[str, Any]:
+    """
+    Proxy a query to an external MCP server.
+    
+    Args:
+        query: The query to send (prefix already removed)
+        target_mcp_url: The target MCP server URL
+        task_id: Task ID for tracking
+        request_id: Request ID for tracing
+        
+    Returns:
+        MCP-formatted response
+    """
+    if not target_mcp_url:
+        return {
+            "task_id": task_id,
+            "error": "Target MCP server URL not configured",
+            "request_id": request_id,
+        }
+    
+    try:
+        # Normalize URL (remove trailing slash)
+        base_url = target_mcp_url.rstrip("/")
+        
+        # Forward the request to the target MCP server
+        # Increase timeout for complex valuation queries that may require multiple tool calls
+        response = requests.post(
+            f"{base_url}/mcp/invoke",
+            json={
+                "tool": "agent_executor",
+                "inputs": {
+                    "input": query,
+                    "task_id": task_id,
+                    "request_id": request_id,
+                },
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=180,  # Increased timeout for valuation analysis (may require analyze + unicorn_hunter)
+        )
+        
+        response.raise_for_status()
+        result = response.json()
+        
+        # Return in MCP-compatible format
+        return {
+            "task_id": task_id,
+            "request_id": request_id,
+            "output": result.get("output", result.get("result", "")),
+            "result": result.get("output", result.get("result", "")),
+        }
+        
+    except requests.exceptions.Timeout:
+        return {
+            "task_id": task_id,
+            "error": "Request to MCP server timed out",
+            "request_id": request_id,
+        }
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = e.response.json()
+            error_msg = error_data.get("error", str(e))
+        except:
+            error_msg = str(e)
+        return {
+            "task_id": task_id,
+            "error": f"MCP server error: {error_msg}",
+            "request_id": request_id,
+        }
+    except Exception as e:
+        return {
+            "task_id": task_id,
+            "error": f"Failed to proxy to MCP server: {str(e)}",
+            "request_id": request_id,
+        }
 
 
 def _invoke_google_places_search(inputs: Dict[str, Any]) -> Dict[str, Any]:

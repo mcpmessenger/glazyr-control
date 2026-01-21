@@ -43,12 +43,31 @@ def _get_tools() -> List[Any]:
     Returns:
         List of LangChain tool instances
     """
+    tools = []
+    
+    # Google Places tool
     try:
         from .tools.google_places_tool import google_places_search_tool
-        return [google_places_search_tool]
+        tools.append(google_places_search_tool)
     except ImportError:
-        # Tools not available, return empty list
-        return []
+        pass  # Tool not available
+    
+    # Valuation MCP tools
+    try:
+        from .tools.valuation_tools import (
+            analyze_github_repository_tool,
+            calculate_valuation_tool,
+            compare_with_market_tool,
+        )
+        tools.extend([
+            analyze_github_repository_tool,
+            calculate_valuation_tool,
+            compare_with_market_tool,
+        ])
+    except ImportError:
+        pass  # Tools not available
+    
+    return tools
 
 
 @retry(retry=retry_if_exception(_should_retry), stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))

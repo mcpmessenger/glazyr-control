@@ -1,0 +1,36 @@
+{
+  "name": "@glazyr/mcp-connectors",
+  "version": "1.0.0",
+  "description": "MCP connectors for Glazyr - Playwright and Google Places",
+  "main": "index.ts",
+  "scripts": {
+    "build": "tsc",
+    "demo": "ts-node demo.ts",
+    "demo:build": "npm run build && node dist/demo.js",
+    "test:playwright": "ts-node test-playwright.ts",
+    "test:playwright:build": "npm run build && node dist/test-playwright.js",
+    "test": "jest",
+    "lint": "eslint ."
+  },
+  "keywords": [
+    "mcp",
+    "connector",
+    "playwright",
+    "google-places",
+    "automation",
+    "safety"
+  ],
+  "author": "Glazyr Team",
+  "license": "MIT",
+  "dependencies": {
+    "playwright": "^1.40.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "playwright": "^1.40.0"
+  }
+}

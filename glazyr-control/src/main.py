@@ -142,7 +142,7 @@ async def post_invoke(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    res = mcp_invoke(payload, store=store, model=settings.openai_model)
+    res = mcp_invoke(payload, store=store, model=settings.openai_model, settings=settings)
     # Standardize errors as MCP-shaped responses (no stack traces).
     if isinstance(res, dict) and res.get("error"):
         # Keep 200 for MCP compatibility; clients should inspect "error".
